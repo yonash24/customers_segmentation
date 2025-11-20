@@ -4,6 +4,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import logging
+from pandas.api.types import is_numeric_dtype
 from kaggle.api.kaggle_api_extended import KaggleApi
 
 
@@ -143,4 +144,88 @@ create class that handle with all the data cleaning functions
 """
 
 class DataCleaning:
-    pass
+
+    #create constructor to the class that will contain the data frame
+    def __init__(self, df:pd.DataFrame):
+        self.df = df
+
+    #handling with missing data. fill with the median
+    def handle_missing_vals(self):
+        for col in self.df:
+            if is_numeric_dtype(self.df[col]):
+                median_val = self.df[col].median()
+                self.df[col] = self.df[col].fillna(median_val)            
+            else:
+                self.df[col] = self.df[col].fillna("Unknown")
+        return self.df
+    
+    #outlier capping, minimize the effect of outliers on the data
+    def cap_outliers(self, factor=1.5):
+        numeric_cols = self.df.select_dtypes(include='number').columns
+        for col in numeric_cols:
+            Q1 = self.df[col].quantile(0.25)
+            Q3 = self.df[col].quantile(0.75)
+            IQR = Q3 - Q1
+            lower_bound = Q1 - (factor * IQR)
+            upper_bound = Q3 + (factor * IQR)
+            self.df[col] = self.df[col].clip(lower=lower_bound, upper=upper_bound)
+
+        logging.info(f"Outliers capped successfully using factor {factor}")
+        return self.df 
+    
+    #make sure each col have the right dtype
+    def correct_data_types(self):
+        if 'InvoiceDate' in self.df.columns:
+            self.df['InvoiceDate'] = pd.to_datetime(self.df['InvoiceDate'], errors='coerce')
+
+        for col in self.df.select_dtypes(include='object').columns:
+            cleaned_col = self.df[col].astype(str).str.replace('$', '').str.replace(',', '')
+            self.df[col] = pd.to_numeric(cleaned_col, errors='ignore')
+
+        logging.info("Data types corrected successfully")
+        return self.df
+    
+    #unit same categorical values written in different ways
+    def clean_categorical_text(self):
+        categorical_cols = self.df.select_dtypes(include='object').columns
+
+        for col in categorical_cols:
+            self.df[col] = self.df[col].astype(str).str.strip().str.lower()
+
+        if 'Country' in self.df.columns:
+            country_corrections = {
+                'u.k.': 'united kingdom',
+                'uk': 'united kingdom',
+                'usa': 'united states',
+                'us': 'united states'
+            }
+            self.df['Country'] = self.df['Country'].replace(country_corrections)
+
+        logging.info("Categorical text cleaned successfully")
+        return self.df
+    
+    #remove duplicated rows
+    def drop_duplicates(self):
+        initial_rows = len(self.df)
+        self.df = self.df.drop_duplicates(keep='first')
+        dropped_count = initial_rows - len(self.df)
+        
+        if dropped_count > 0:
+            logging.info(f"Removed {dropped_count} duplicate rows")
+        else:
+            logging.info("No duplicate rows found")
+
+        return self.df
+    
+    #create pipeline for data cleaning class
+    def run_pipeline(self):
+        self.drop_duplicates()
+        self.correct_data_types()
+        self.clean_categorical_text()
+        self.handle_missing_vals()
+        self.cap_outliers()
+        
+        logging.info("Pipeline Completed Successfully")
+        return self.df
+    
+    
