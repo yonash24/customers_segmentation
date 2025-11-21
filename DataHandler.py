@@ -7,6 +7,7 @@ import logging
 from pandas.api.types import is_numeric_dtype
 from kaggle.api.kaggle_api_extended import KaggleApi
 from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import StandardScaler
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -147,6 +148,12 @@ class DataCleaning:
     def __init__(self, df:pd.DataFrame):
         self.df = df
 
+    #remove unneccecarry cols
+    def drop_unnecessary_cols(self, cols_list = ['StockCode', 'Description']):
+        self.df = self.df.drop(columns=cols_list, errors='ignore')
+        logging.info(f"Unnecessary columns dropped: {cols_list}")
+        return self.df
+
     #handling with missing data. fill with the median
     def handle_missing_vals(self):
         for col in self.df:
@@ -226,7 +233,9 @@ class DataCleaning:
         logging.info("Pipeline Completed Successfully")
         return self.df
     
-
+"""
+create class that handle with all the data preprocessing functions
+"""
 class DataPreProcessing:
 
     #create constructor to the class
@@ -240,9 +249,10 @@ class DataPreProcessing:
         reference_date = max_date + pd.Timedelta(days=1)
 
         rfm = self.df.groupby('CustomerID').agg({
-            'InvoiceDate': lambda x: (reference_date - x.max()).days, 
-            'InvoiceNo': 'nunique',                                   
-            'TotalPrice': 'sum'                                       
+            'InvoiceDate': lambda x: (reference_date - x.max()).days,
+            'InvoiceNo': 'nunique',
+            'TotalPrice': 'sum',
+            'Country': 'first'  
         })
 
         rfm.rename(columns={
@@ -252,7 +262,6 @@ class DataPreProcessing:
         }, inplace=True)
 
         logging.info(f"RFM features created successfully. Shape: {rfm.shape}")
-
         return rfm
 
     """
@@ -277,3 +286,50 @@ class DataPreProcessing:
     """
     def encode_nominal_features(self):
         categorical_cols = ["Country"]
+
+        encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
+        encoded_data = encoder.fit_transform(self.df[categorical_cols])
+
+        encoded_df = pd.DataFrame(
+            encoded_data, 
+            columns=encoder.get_feature_names_out(categorical_cols),
+            index=self.df.index 
+        )
+        
+        self.df = pd.concat([self.df, encoded_df], axis=1)
+        self.df.drop(columns=categorical_cols, inplace=True)
+        logging.info(f"Nominal features encoded successfully: {categorical_cols}")
+
+    """
+    We will replace the regularization encoding function with a critical function 
+    that deals with the main problem with categorical columns: multi-valuedness.
+    """
+    def group_sparse_categories(self, feature, top_n):
+        top_categories = self.df[feature].value_counts().nlargest(top_n).index
+        self.df[feature] = self.df[feature].where(self.df[feature].isin(top_categories), other='Other')
+        logging.info(f"Sparse categories in '{feature}' grouped into 'Other'. Kept top {top_n} categories.")
+
+    """
+    Bring all numeric features in a DataFrame (including logarithmically 
+    transformed RFM features and one-hot encoded categorical features) to a uniform value range
+    """
+    def scale_data(self):
+        numeric_cols = self.df.select_dtypes(include=['number']).columns
+        scaler = StandardScaler()
+        self.df[numeric_cols] = scaler.fit_transform(self.df[numeric_cols])
+        logging.info("Data scaling completed successfully.")
+        return self.df
+    
+    #create pipeline for data preprocessing class
+    def run_pipeline(self):
+        self.df = self.create_rfm_features()
+        self.apply_log_transformation(['Recency', 'Frequency', 'Monetary'])
+        self.group_sparse_categories('Country', top_n=10)
+        self.encode_nominal_features()
+        final_df = self.scale_data()
+        
+        logging.info("Preprocessing Pipeline Completed Successfully")
+        return final_df
+    
+
+
