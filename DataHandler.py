@@ -6,7 +6,7 @@ import seaborn as sns
 import logging
 from pandas.api.types import is_numeric_dtype
 from kaggle.api.kaggle_api_extended import KaggleApi
-
+from sklearn.preprocessing import OneHotEncoder
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -42,8 +42,6 @@ class ImportData:
                 return df
             except Exception as e:
                 logging.error(f"error has occured {e} while transfering the file")
-
-
 
 """
 create a class that analyz the data and help us
@@ -228,4 +226,54 @@ class DataCleaning:
         logging.info("Pipeline Completed Successfully")
         return self.df
     
-    
+
+class DataPreProcessing:
+
+    #create constructor to the class
+    def __init__(self, df:pd.DataFrame):
+        self.df = df
+
+    #create new coloumns and add them to our data frame
+    def create_rfm_features(self):
+        self.df['TotalPrice'] = self.df['Quantity'] * self.df['UnitPrice']
+        max_date = self.df['InvoiceDate'].max()
+        reference_date = max_date + pd.Timedelta(days=1)
+
+        rfm = self.df.groupby('CustomerID').agg({
+            'InvoiceDate': lambda x: (reference_date - x.max()).days, 
+            'InvoiceNo': 'nunique',                                   
+            'TotalPrice': 'sum'                                       
+        })
+
+        rfm.rename(columns={
+            'InvoiceDate': 'Recency',
+            'InvoiceNo': 'Frequency',
+            'TotalPrice': 'Monetary'
+        }, inplace=True)
+
+        logging.info(f"RFM features created successfully. Shape: {rfm.shape}")
+
+        return rfm
+
+    """
+    Handling positive skewness is robust in numerical features (especially RFM features). 
+    The goal of the transformation is to create a more normal-like distribution, 
+    which improves the performance of K-Means distance-based clustering algorithms.
+    """
+    def apply_log_transformation(self, features_list):
+        for feature in features_list:
+            if (self.df[feature] < 0).any():
+                logging.warning(f"Column {feature} contains negative values. Log transform might fail.")
+            
+            self.df['log_' + feature] = np.log1p(self.df[feature])
+
+        logging.info(f"Log transformation applied to: {features_list}")
+        return self.df
+
+    """
+    Convert nominal categorical features (Nominal - without internal order, 
+    such as gender, country) to binary format (0 or 1) using One-Hot Encoding.
+    Clustering algorithms cannot work directly with text
+    """
+    def encode_nominal_features(self):
+        categorical_cols = ["Country"]
